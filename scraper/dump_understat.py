@@ -6,6 +6,7 @@ from understat import Understat
 # --- SETTINGS ---
 LEAGUE = "EPL"   # Understat league code
 SEASON = 2025    # 2025/26
+DUMP_SHOTS = True
 # ---------------
 
 OUT = Path(__file__).resolve().parents[1] / "public"
@@ -35,80 +36,91 @@ async def dump():
     async with aiohttp.ClientSession() as session:
         u = Understat(session)
 
-        # 1) League teams (id, title, etc.)
-        teams = await u.get_teams(LEAGUE.lower(), SEASON)
+        # 1) Get ALL results for the league/season (includes match id + teams + goals + datetime)
+        results = await u.get_league_results(LEAGUE.lower(), SEASON)
+        # results items look like:
+        # {"id": "2179191", "h": {...}, "a": {...}, "goals": {"h": "2", "a": "1"}, "datetime": "2025-08-17 15:30:00", ...}
+        # with "h" and "a" containing "title" (team names), etc.
+
+        # 2) Derive team set and build per-team histories
+        teams_titles = set()
+        for r in results:
+            if "h" in r and r["h"] and "title" in r["h"]:
+                teams_titles.add(r["h"]["title"])
+            if "a" in r and r["a"] and "title" in r["a"]:
+                teams_titles.add(r["a"]["title"])
 
         teams_out = []
-        id_by_title = {}
-        for t in teams:
-            title = t["title"]
-            tid = int(t["id"])
-            id_by_title[title] = tid
+        for title in sorted(teams_titles):
             teams_out.append({
-                "id": str(tid),
+                "id": None,                # Understat Python API doesn't expose numeric team id here; not needed for your Sheet
                 "title": title,
                 "slug": slugify(title),
             })
 
+        # 3) Write league teams list
         league_dir = OUT / "league" / LEAGUE
         league_dir.mkdir(parents=True, exist_ok=True)
         with open(league_dir / f"{SEASON}.json", "w", encoding="utf-8") as f:
-            json.dump({ "teams": teams_out }, f, ensure_ascii=False)
+            json.dump({"teams": teams_out}, f, ensure_ascii=False)
 
-        # 2) Each team: dump history with real match IDs + goals
-        for t in teams_out:
-            # map friendly slug to official title if needed
-            title = None
+        # 4) For each team, build history from league results (guaranteed match IDs)
+        #    history rows: {id, h_a, scored, conceded, date}
+        by_team_slug = {t["slug"]: t["title"] for t in teams_out}
+
+        for slug, title in by_team_slug.items():
+            # map friendly aliases back to official titles, e.g., "man-city" -> "Manchester City"
             for alias, true_title in ALIASES.items():
-                if t["slug"] == alias:
+                if slug == alias:
                     title = true_title
                     break
-            if title is None:
-                title = next((k for k in id_by_title if slugify(k) == t["slug"]), t["title"])
-
-            team_id = id_by_title.get(title)
-            if not team_id:
-                for k, v in id_by_title.items():
-                    if slugify(k) == t["slug"]:
-                        team_id = v
-                        break
-
-            matches = await u.get_team_matches(team_id, SEASON)
 
             history = []
-            for m in matches:
-                is_home = bool(m.get("is_home"))
-                scored = m.get("goals")
-                conceded = m.get("goals_opp")
-                mid = m.get("id")
-                dt = m.get("datetime") or m.get("date")
+            for r in results:
+                # ensure we have fields
+                mid = r.get("id")
+                dt = r.get("datetime")
+                h = r.get("h") or {}
+                a = r.get("a") or {}
+                h_title = h.get("title")
+                a_title = a.get("title")
+                goals = r.get("goals") or {}
+                h_goals = goals.get("h")
+                a_goals = goals.get("a")
 
-                history.append({
-                    "id": int(mid) if mid is not None else None,
-                    "h_a": "h" if is_home else "a",
-                    "scored": int(scored) if scored is not None else None,
-                    "conceded": int(conceded) if conceded is not None else None,
-                    "date": dt,
-                })
+                if title == h_title or title == a_title:
+                    is_home = (title == h_title)
+                    scored = int(h_goals) if is_home else int(a_goals)
+                    conceded = int(a_goals) if is_home else int(h_goals)
+                    history.append({
+                        "id": int(mid) if mid is not None else None,
+                        "h_a": "h" if is_home else "a",
+                        "scored": scored,
+                        "conceded": conceded,
+                        "date": dt,
+                    })
 
+            # sort by date and write file
             history.sort(key=lambda x: x["date"] or "")
-
-            team_dir = OUT / "team" / t["slug"]
+            team_dir = OUT / "team" / slug
             team_dir.mkdir(parents=True, exist_ok=True)
             with open(team_dir / f"{SEASON}.json", "w", encoding="utf-8") as f:
-                ujson.dump({ "history": history }, f, ensure_ascii=False)
+                ujson.dump({"history": history}, f, ensure_ascii=False)
 
-            # 3) (optional) dump shots per match once
+        # 5) (Optional) dump shots for each match once
+        if DUMP_SHOTS:
             match_dir = OUT / "match"
             match_dir.mkdir(parents=True, exist_ok=True)
-            for row in history:
-                if not row["id"]:
+            seen = set()
+            for r in results:
+                mid = r.get("id")
+                if not mid or mid in seen:
                     continue
-                mid = row["id"]
-                shots_path = match_dir / f"{mid}.json"
+                seen.add(mid)
+                shots_path = match_dir / f"{int(mid)}.json"
                 if shots_path.exists():
                     continue
-                shots = await u.get_match_shots(mid)
+                shots = await u.get_match_shots(int(mid))  # { "h": [...], "a": [...] }
                 with open(shots_path, "w", encoding="utf-8") as f:
                     ujson.dump(shots, f, ensure_ascii=False)
 
