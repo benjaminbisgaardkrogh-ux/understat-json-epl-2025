@@ -1,5 +1,24 @@
 [build]
-  command = "python -m pip install --upgrade pip && PIP_ONLY_BINARY=:all: pip install --only-binary=:all: -r scraper/requirements.txt && python scraper/dump_understat.py"
+  # Robust build: detects where the files are and runs the scraper
+  command = """
+  set -euo pipefail
+  echo 'PWD:' $(pwd)
+  echo 'Top-level listing:'; ls -la
+  # Detect scraper directory (either repo root or Base directory context)
+  if [ -f scraper/dump_understat.py ]; then
+    SRC_DIR="scraper"
+  elif [ -f dump_understat.py ]; then
+    SRC_DIR="."
+  else
+    echo 'ERROR: dump_understat.py not found in repo root or scraper/'; echo 'Tree:'; find . -maxdepth 3 -type f | sort
+    exit 1
+  fi
+
+  python -m pip install --upgrade pip
+  # Use binary wheels to avoid building aiohttp from source
+  PIP_ONLY_BINARY=:all: pip install --only-binary=:all: -r "$SRC_DIR/requirements.txt"
+  python "$SRC_DIR/dump_understat.py"
+  """
   publish = "public"
 
 [[headers]]
