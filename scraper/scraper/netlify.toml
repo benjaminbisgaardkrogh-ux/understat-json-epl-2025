@@ -1,9 +1,7 @@
 [build]
-  # Install Python deps and run the scraper to create /public JSON.
-  command = "pip install -r scraper/requirements.txt && python scraper/dump_understat.py"
+  command = "python -m pip install --upgrade pip && PIP_ONLY_BINARY=:all: pip install --only-binary=:all: -r scraper/requirements.txt && python scraper/dump_understat.py"
   publish = "public"
 
-# Set CORS/headers on all files we serve (JSON etc.)
 [[headers]]
   for = "/*"
   [headers.values]
