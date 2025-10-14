@@ -1,0 +1,10 @@
+[build]
+  command = "python -m pip install --upgrade pip && PIP_ONLY_BINARY=:all: pip install --only-binary=:all: -r scraper/requirements.txt && python scraper/dump_understat.py"
+  publish = "public"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Methods = "GET, OPTIONS"
+    Content-Type = "application/json; charset=utf-8"
