@@ -49,8 +49,9 @@ async def dump():
     async with aiohttp.ClientSession() as session:
         u = Understat(session)
 
-        # 1) Pull ALL league results once (has id, teams, goals, datetime)
-        results = await u.get_league_results(LEAGUE.lower(), SEASON)
+        # Always fetch Premier League only (EPL)
+        results = await u.get_league_results("epl", SEASON)
+
 
         # 2) Build per-team histories directly from results (key: official slug)
         histories = defaultdict(list)   # slug -> list of rows
